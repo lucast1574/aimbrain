@@ -1,6 +1,6 @@
 # 🧠 AimBrain — AI-Powered Fortnite Agent
 
-> **Let AI play Fortnite.** A remote-controlled game agent with fast screen capture, 35+ combat/building/looting macros, and an HTTP API designed for vision-model integration.
+> **Let AI play Fortnite.** A modular, remote-controlled game agent with fast screen capture, 35+ combat/building/looting macros, and an HTTP API designed for vision-model integration.
 
 ![Python](https://img.shields.io/badge/python-3.10+-blue?logo=python)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -12,27 +12,63 @@
 
 AimBrain is a two-part system:
 
-1. **Agent** (`agent.py`) — Runs on your gaming PC. Captures screenshots at high speed (JPEG, ~50ms), accepts mouse/keyboard commands, and exposes **35+ game-aware macros** (shooting, building, looting, movement patterns) over a local HTTP API.
+1. **Agent** (`aimbrain/`) — Runs on your gaming PC. Captures screenshots at high speed (JPEG, ~50ms), accepts mouse/keyboard commands, and exposes **35+ game-aware macros** over a local HTTP API.
 
-2. **Controller** (`controller.py`) — Runs anywhere on your network (or the same machine). Python SDK + CLI to command the agent. Feed screenshots to GPT-4 Vision, Claude, or any model and translate decisions into macros.
+2. **Client SDK** (`aimbrain/client.py`) — Runs anywhere on your network. Python SDK + CLI to command the agent. Feed screenshots to GPT-4 Vision, Claude, or any model and translate decisions into macros.
 
 ```
 ┌──────────────┐    HTTP/JSON     ┌──────────────┐
-│  Controller   │ ◄────────────► │    Agent      │
+│    Client     │ ◄────────────► │    Agent      │
 │  (any device) │  screenshots   │  (gaming PC)  │
 │  AI / LLM     │  + macros      │  pyautogui    │
 └──────────────┘                 └──────────────┘
 ```
 
+---
+
+## 📁 Project Structure
+
+```
+aimbrain/
+├── __init__.py          # Package metadata + version
+├── __main__.py          # python -m aimbrain entry point
+├── config.py            # Config loading, runtime updates, singleton
+├── input.py             # Low-level mouse/keyboard (Win32 + pyautogui)
+├── screenshot.py        # Fast JPEG capture, caching, region crops
+├── server.py            # Threaded HTTP server, all endpoints
+├── client.py            # Python SDK for remote control
+└── macros/
+    ├── __init__.py      # Macro registry (auto-collects all submodules)
+    ├── combat.py        # Shooting, aiming, peeking, weapon combos
+    ├── building.py      # Walls, ramps, boxes, 90s, edits
+    ├── movement.py      # Movement patterns (zigzag, explore, evasive)
+    ├── looting.py       # Pickup, chests, harvesting, area sweeps
+    └── utility.py       # Camera, weapons, heal, emergency, disengage
+
+agent.py                 # Thin entry: starts the server
+controller.py            # CLI tool: command the agent from terminal
+config.json              # User-editable settings + keybinds
+requirements.txt
+```
+
+Each module has a **single responsibility**:
+- **config** handles all settings — no globals scattered around
+- **input** is the only module that touches pyautogui/ctypes
+- **screenshot** is the only module that touches mss/PIL
+- **macros/** each file is one gameplay domain — easy to add new ones
+- **server** wires everything together into HTTP endpoints
+
+---
+
 ## ⚡ Key Features
 
 ### Performance
-- **JPEG screenshots** — 45% quality + 0.5x scale = ~15-30KB per frame (vs ~2MB PNG)
+- **JPEG screenshots** — 45% quality + 0.5x scale = ~15-30KB per frame
 - **50ms screenshot cache** — no redundant grabs
-- **Win32 direct input** — bypasses pyautogui for mouse events via `ctypes` (when on Windows)
-- **Threaded HTTP server** — handles concurrent requests without blocking
-- **Batch endpoints** — send 20 actions in 1 request via `/keys` or `/macro_sequence`
-- **Zero pyautogui pause** — every millisecond counts
+- **Win32 direct input** — bypasses pyautogui for mouse via `ctypes`
+- **Threaded HTTP** — concurrent requests, no blocking
+- **Batch endpoints** — 20 actions in 1 request via `/keys` or `/macro_sequence`
+- **Zero pause** — `pyautogui.PAUSE = 0` globally
 
 ### 35+ Game Macros
 
@@ -45,11 +81,12 @@ AimBrain is a two-part system:
 | **Utility** | `look` `smooth_look` `switch_weapon` `pickaxe` `reload` `heal` `emergency` `disengage` |
 
 ### Pre-Built Combat Sequences
-The controller includes high-level plays:
-- `land_and_loot()` — dive fast → sweep loot
-- `fight_sequence(slot)` — weapon swap → build cover → peek shoot
-- `push_enemy(ramps, slot)` — wall-ramp rush → swap → fire
-- `box_fight_peek(direction)` — box up → peek → reset
+```python
+bot.land_and_loot()                        # Dive fast → sweep loot
+bot.fight_sequence(weapon_slot=1)          # Weapon → cover → peek shoot
+bot.push_enemy(ramps=3, weapon_slot=1)     # Wall-ramp rush → swap → fire
+bot.box_fight_peek(direction="right")      # Box up → peek → reset
+```
 
 ---
 
@@ -61,40 +98,40 @@ The controller includes high-level plays:
 git clone https://github.com/lucast1574/aimbrain.git
 cd aimbrain
 pip install -r requirements.txt
-python agent.py
 ```
 
-### 2. Control from anywhere
+### 2. Start the agent
 
 ```bash
-# From another machine on the same network
+# Option A: entry script
+python agent.py
+
+# Option B: module
+python -m aimbrain
+```
+
+### 3. Control from anywhere
+
+```bash
+# CLI
 python controller.py --host http://YOUR_PC_IP:9777 --ping
-
-# Take a screenshot
 python controller.py --screenshot screen.jpg
-
-# List all macros
 python controller.py --macros
-
-# Run a macro
 python controller.py --macro aim_shoot --params '{"duration": 500}'
-
-# Emergency release all keys
+python controller.py --stats
 python controller.py --release
 ```
 
-### 3. Use the Python SDK
+### 4. Python SDK
 
 ```python
-from controller import AimBrain
+from aimbrain.client import AimBrain
 
 bot = AimBrain("http://192.168.1.100:9777")
 
-# Take a screenshot (returns JPEG bytes)
-img = bot.screenshot()
-
-# Get base64 for LLM vision APIs
-img_b64 = bot.screenshot_b64()
+# Screenshots
+img = bot.screenshot()              # Raw JPEG bytes
+img_b64 = bot.screenshot_b64()      # Base64 for LLM APIs
 
 # Combat
 bot.switch_weapon(1)
@@ -103,17 +140,16 @@ bot.tap_fire(count=5)
 bot.build_cover()
 
 # Movement
-bot.explore(duration=3000)   # Sprint + look around + jump
-bot.zigzag(duration=2000)    # Evasive forward movement
-bot.evade(duration=2000)     # Combat evasion (random crouch/jump/strafe)
+bot.explore(duration=3000)
+bot.zigzag(duration=2000)
+bot.evade(duration=2000)
 
 # Complex plays
 bot.push_enemy(ramps=3, weapon_slot=1)
 bot.box_fight_peek(direction="right")
-bot.land_and_loot()
 
 # Safety
-bot.release_all()  # Release all held keys/buttons
+bot.release_all()
 ```
 
 ---
@@ -124,16 +160,16 @@ bot.release_all()  # Release all held keys/buttons
 
 | Endpoint | Description |
 |----------|-------------|
-| `/ping` | Health check, returns `{"ok": true, "ts": ...}` |
-| `/screenshot` | Full-screen JPEG. Query: `?quality=45&scale=0.5&monitor=0` |
-| `/screenshot/region` | Crop region. Query: `?x=0&y=0&w=400&h=200&quality=70` |
-| `/screen_size` | Returns `{"width": ..., "height": ...}` |
+| `/ping` | Health check (`{"ok": true, "version": "3.0.0", "ts": ...}`) |
+| `/screenshot` | Full screen JPEG. Query: `?quality=45&scale=0.5&monitor=0` |
+| `/screenshot/region` | Region crop. Query: `?x=0&y=0&w=400&h=200&quality=70` |
+| `/screen_size` | Monitor dimensions |
 | `/mouse` | Current cursor position |
-| `/macros` | List all available macro names |
+| `/macros` | List all macro names + count |
 | `/binds` | Current key bindings |
-| `/stats` | Performance stats (screenshots, macros, uptime) |
-| `/config` | Current config (excluding binds) |
-| `/monitors` | Available monitors with dimensions |
+| `/stats` | Performance stats (screenshots, macros, uptime, idle) |
+| `/config` | Current settings (without binds) |
+| `/monitors` | All monitors with dimensions |
 
 ### POST Endpoints
 
@@ -143,20 +179,19 @@ bot.release_all()  # Release all held keys/buttons
 | `/macro_sequence` | `{"steps": [{"name": "...", "params": {}, "wait_ms": 0}]}` | Chain macros |
 | `/keys` | `{"actions": [{"type": "key", "key": "w", "duration": 1000}]}` | Batch raw input |
 | `/key` | `{"key": "space", "duration": 0}` | Single key press/hold |
-| `/click` | `{"x": 960, "y": 540, "button": "left"}` | Mouse click at position |
-| `/move` | `{"dx": 100, "dy": 0}` or `{"x": 960, "y": 540}` | Mouse move (relative or absolute) |
-| `/mousedown` | `{"button": "left"}` | Hold mouse button |
-| `/mouseup` | `{"button": "left"}` | Release mouse button |
+| `/click` | `{"x": 960, "y": 540, "button": "left"}` | Mouse click |
+| `/move` | `{"dx": 100, "dy": 0}` or `{"x": 960, "y": 540}` | Mouse move |
+| `/mousedown` / `/mouseup` | `{"button": "left"}` | Hold/release mouse |
 | `/focus` | `{}` | Focus the Fortnite window |
-| `/release_all` | `{}` | **Safety:** Release all held keys and buttons |
-| `/binds` | `{"forward": "w", ...}` | Update key bindings at runtime |
-| `/config` | `{"screenshot_quality": 60}` | Update config at runtime |
+| `/release_all` | `{}` | **Safety:** release all held keys + buttons |
+| `/binds` | `{"forward": "w"}` | Update keybinds at runtime |
+| `/config` | `{"screenshot_quality": 60}` | Update settings at runtime |
 
 ---
 
 ## ⚙️ Configuration
 
-Edit `config.json` to customize:
+Edit `config.json`:
 
 ```json
 {
@@ -169,65 +204,67 @@ Edit `config.json` to customize:
   "binds": {
     "forward": "w",
     "build_wall": "z",
-    "...": "..."
+    "..."
   }
 }
 ```
 
-You can also update config and binds at runtime via the API — no restart needed.
+Config and binds can also be updated at runtime via API — no restart needed.
 
 ---
 
 ## 🤖 AI Integration Example
 
-Feed screenshots to a vision model and translate responses into macros:
-
 ```python
+import json
 import openai
-from controller import AimBrain
+from aimbrain.client import AimBrain
 
 bot = AimBrain("http://192.168.1.100:9777")
 client = openai.OpenAI()
 
 while True:
-    # Grab the screen
     img_b64 = bot.screenshot_b64(quality=40, scale=0.4)
 
-    # Ask the AI what to do
     response = client.chat.completions.create(
         model="gpt-4o",
         messages=[{
             "role": "user",
             "content": [
-                {"type": "text", "text": "You are playing Fortnite. What action should I take? "
-                 "Reply with a JSON macro command like {\"name\": \"aim_shoot\", \"params\": {\"duration\": 300}}"},
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}
+                {"type": "text", "text":
+                    "You are playing Fortnite. Analyze the screen and respond with "
+                    "a JSON macro: {\"name\": \"macro_name\", \"params\": {...}}"},
+                {"type": "image_url",
+                 "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}
             ]
         }],
         max_tokens=200,
     )
 
-    # Parse and execute
-    import json
     action = json.loads(response.choices[0].message.content)
     bot.macro(action["name"], **action.get("params", {}))
 ```
 
 ---
 
-## 🏗️ Architecture
+## 🧩 Adding Custom Macros
 
-```
-aimbrain/
-├── agent.py          # HTTP server + input + macros (runs on gaming PC)
-├── controller.py     # Python SDK + CLI (runs anywhere)
-├── config.json       # Keybinds, screenshot settings, port
-├── requirements.txt  # Python dependencies
-├── LICENSE           # MIT
-└── README.md
-```
+1. Pick the right file in `aimbrain/macros/` (or create a new one)
+2. Write your function using primitives from `aimbrain.input`
+3. Add it to the module's `MACROS` dict
+4. It's automatically available via the API — no other changes needed
 
-The agent is intentionally **stateless** — it doesn't decide what to do, it just executes commands. Decision-making belongs in the controller (your AI, your rules).
+```python
+# aimbrain/macros/combat.py
+
+def my_combo():
+    """My custom combo."""
+    key_down("sprint")
+    shoot(200)
+    key_up("sprint")
+
+MACROS["my_combo"] = lambda p: my_combo()
+```
 
 ---
 
