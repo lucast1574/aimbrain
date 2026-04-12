@@ -15,6 +15,11 @@ DEFAULT_CONFIG = {
     "screenshot_scale": 0.5,
     "screenshot_cache_ms": 50,
     "log_requests": False,
+    "donclaw": {
+        "enabled": False,
+        "host": "http://192.168.18.6:9800",
+        "timeout": 10,
+    },
 }
 
 DEFAULT_BINDS = {
@@ -48,6 +53,9 @@ class Config:
                 user = json.load(f)
             if "binds" in user:
                 self.binds.update(user.pop("binds"))
+            # Deep-merge donclaw sub-dict
+            if "donclaw" in user:
+                self._settings["donclaw"].update(user.pop("donclaw"))
             self._settings.update(user)
             log.info(f"Loaded config from {path}")
         except Exception as e:
@@ -78,6 +86,18 @@ class Config:
     @property
     def log_requests(self) -> bool:
         return self._settings["log_requests"]
+
+    @property
+    def donclaw_enabled(self) -> bool:
+        return self._settings["donclaw"]["enabled"]
+
+    @property
+    def donclaw_host(self) -> str:
+        return self._settings["donclaw"]["host"].rstrip("/")
+
+    @property
+    def donclaw_timeout(self) -> int:
+        return self._settings["donclaw"]["timeout"]
 
     def get(self, key: str, default=None):
         return self._settings.get(key, default)

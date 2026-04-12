@@ -14,7 +14,10 @@ from socketserver import ThreadingMixIn
 from urllib.parse import urlparse, parse_qs
 from pathlib import Path
 
-import pyautogui
+try:
+    import pyautogui
+except ImportError:
+    pyautogui = None
 
 from aimbrain import __version__
 from aimbrain import config as _config
@@ -29,6 +32,7 @@ log = logging.getLogger("aimbrain.server")
 _stats_lock = threading.Lock()
 _stats = {
     "screenshots": 0,
+    "ocr_calls": 0,
     "macros_run": 0,
     "actions": 0,
     "requests": 0,
@@ -48,7 +52,23 @@ def _get_stats() -> dict:
         s = _stats.copy()
     s["uptime_s"] = round(time.time() - s["start_time"], 1)
     s["idle_s"] = round(time.time() - s["last_activity"], 1)
+    cfg = _config.get()
+    s["backend"] = "donclaw" if cfg.donclaw_enabled else "local"
+    if cfg.donclaw_enabled:
+        s["donclaw_host"] = cfg.donclaw_host
     return s
+
+
+def _donclaw_enabled() -> bool:
+    try:
+        return _config.get().donclaw_enabled
+    except RuntimeError:
+        return False
+
+
+def _dc():
+    from aimbrain import donclaw
+    return donclaw
 
 
 # ─── Threaded HTTP server ────────────────────────────────────────────
@@ -103,30 +123,93 @@ class _Handler(BaseHTTPRequestHandler):
         cfg = _config.get()
 
         if p == "/ping":
-            self._json({"ok": True, "version": __version__, "ts": time.time()})
+            self._json({
+                "ok": True,
+                "version": __version__,
+                "ts": time.time(),
+                "backend": "donclaw" if cfg.donclaw_enabled else "local",
+            })
 
         elif p == "/screenshot":
-            monitor = int(params.get("monitor", [cfg.monitor])[0])
-            quality = int(params.get("quality", [cfg.screenshot_quality])[0])
-            scale = float(params.get("scale", [cfg.screenshot_scale])[0])
-            data = screenshot.capture(monitor=monitor, quality=quality, scale=scale)
-            _stat_inc("screenshots")
-            self._ok(data, "image/jpeg")
+            if _donclaw_enabled():
+                # DonClaw mode: return OCR text instead
+                data = screenshot.ocr()
+                _stat_inc("ocr_calls")
+                self._json(data)
+            else:
+                monitor = int(params.get("monitor", [cfg.monitor])[0])
+                quality = int(params.get("quality", [cfg.screenshot_quality])[0])
+                scale = float(params.get("scale", [cfg.screenshot_scale])[0])
+                data = screenshot.capture(monitor=monitor, quality=quality, scale=scale)
+                _stat_inc("screenshots")
+                self._ok(data, "image/jpeg")
 
         elif p == "/screenshot/region":
-            x = int(params.get("x", [0])[0])
-            y = int(params.get("y", [0])[0])
-            w = int(params.get("w", [400])[0])
-            h = int(params.get("h", [200])[0])
-            q = int(params.get("quality", [70])[0])
-            data = screenshot.capture_region(x, y, w, h, q)
-            _stat_inc("screenshots")
-            self._ok(data, "image/jpeg")
+            if _donclaw_enabled():
+                # No region crop in OCR mode — return full OCR
+                data = screenshot.ocr()
+                _stat_inc("ocr_calls")
+                self._json(data)
+            else:
+                x = int(params.get("x", [0])[0])
+                y = int(params.get("y", [0])[0])
+                w = int(params.get("w", [400])[0])
+                h = int(params.get("h", [200])[0])
+                q = int(params.get("quality", [70])[0])
+                data = screenshot.capture_region(x, y, w, h, q)
+                _stat_inc("screenshots")
+                self._ok(data, "image/jpeg")
+
+        # ── DonClaw-specific GET endpoints ────────────────────────────
+
+        elif p == "/ocr":
+            if not _donclaw_enabled():
+                self._error(503, "DonClaw not enabled")
+                return
+            try:
+                data = screenshot.ocr()
+                _stat_inc("ocr_calls")
+                self._json(data)
+            except Exception as e:
+                self._error(502, f"DonClaw OCR failed: {e}")
+
+        elif p == "/find":
+            if not _donclaw_enabled():
+                self._error(503, "DonClaw not enabled")
+                return
+            q = params.get("q", [None])[0]
+            if not q:
+                self._error(400, "Missing ?q= parameter")
+                return
+            try:
+                data = screenshot.find_text(q)
+                self._json(data)
+            except Exception as e:
+                self._error(502, f"DonClaw find failed: {e}")
+
+        elif p == "/donclaw/status":
+            if not _donclaw_enabled():
+                self._json({"enabled": False})
+                return
+            try:
+                data = _dc().ping()
+                data["enabled"] = True
+                self._json(data)
+            except Exception as e:
+                self._json({"enabled": True, "reachable": False, "error": str(e)})
+
+        # ── Standard GET endpoints ────────────────────────────────────
 
         elif p == "/monitors":
-            import mss as _mss
-            with _mss.mss() as sct:
-                self._json([{"index": i, **m} for i, m in enumerate(sct.monitors)])
+            if _donclaw_enabled():
+                self._json({"note": "DonClaw mode — use /ocr instead"})
+            else:
+                try:
+                    import mss as _mss
+                    with _mss.mss() as sct:
+                        self._json([{"index": i, **m} for i, m in enumerate(sct.monitors)])
+                except ImportError:
+                    self._error(503, "mss not installed — enable DonClaw mode")
 
         elif p == "/mouse":
             x, y = inp.mouse_position()
@@ -233,8 +316,39 @@ class _Handler(BaseHTTPRequestHandler):
             _config.get().update_settings(body)
             self._json({"ok": True})
 
+        # ── DonClaw-specific POST endpoints ───────────────────────────
+
+        elif p == "/act":
+            if not _donclaw_enabled():
+                self._error(503, "DonClaw not enabled")
+                return
+            try:
+                result = _dc().act(body.get("text", ""), **{k: v for k, v in body.items() if k != "text"})
+                _stat_inc("actions")
+                self._json(result)
+            except Exception as e:
+                self._error(502, f"DonClaw act failed: {e}")
+
+        elif p == "/donclaw/sequence":
+            if not _donclaw_enabled():
+                self._error(503, "DonClaw not enabled")
+                return
+            try:
+                result = _dc().sequence(body.get("steps", []))
+                _stat_inc("actions")
+                self._json(result)
+            except Exception as e:
+                self._error(502, f"DonClaw sequence failed: {e}")
+
         elif p == "/focus":
-            self._handle_focus()
+            if _donclaw_enabled():
+                try:
+                    result = _dc().focus(body.get("name", "fortnite"))
+                    self._json(result)
+                except Exception as e:
+                    self._json({"ok": False, "error": str(e)})
+            else:
+                self._handle_focus()
 
         elif p == "/release_all":
             inp.release_all()
@@ -284,7 +398,7 @@ class _Handler(BaseHTTPRequestHandler):
         _stat_inc("actions", len(actions))
         return results
 
-    # ── Focus Fortnite ────────────────────────────────────────────────
+    # ── Focus Fortnite (local mode fallback) ──────────────────────────
 
     def _handle_focus(self):
         try:
@@ -322,16 +436,28 @@ def main():
 
     cfg = _config.init(config_path)
 
-    log.info("=" * 52)
+    backend = "DonClaw" if cfg.donclaw_enabled else "Local"
+    log.info("=" * 56)
     log.info(f"  AimBrain v{__version__} — Fortnite Vision Agent")
+    log.info(f"  Backend: {backend}")
+    if cfg.donclaw_enabled:
+        log.info(f"  DonClaw Node: {cfg.donclaw_host}")
     log.info(f"  Port: {cfg.port}")
-    log.info(f"  Screenshot: JPEG q={cfg.screenshot_quality} scale={cfg.screenshot_scale}")
+    if not cfg.donclaw_enabled:
+        log.info(f"  Screenshot: JPEG q={cfg.screenshot_quality} scale={cfg.screenshot_scale}")
     log.info(f"  Macros: {len(MACROS)} available")
-    log.info(f"  Win32 fast input: {'YES' if inp.HAS_WIN32 else 'NO'}")
-    log.info("=" * 52)
-    log.info("GET  /screenshot /screenshot/region /ping /stats /macros /binds")
+    if not cfg.donclaw_enabled:
+        log.info(f"  Win32 fast input: {'YES' if inp.HAS_WIN32 else 'NO'}")
+    log.info("=" * 56)
+    log.info("GET  /ping /stats /macros /binds /config")
+    if cfg.donclaw_enabled:
+        log.info("GET  /ocr /find /donclaw/status")
+    else:
+        log.info("GET  /screenshot /screenshot/region")
     log.info("POST /macro /macro_sequence /keys /click /move /key")
-    log.info("POST /release_all /focus /config /binds")
+    if cfg.donclaw_enabled:
+        log.info("POST /act /donclaw/sequence /focus")
+    log.info("POST /release_all /config /binds")
     log.info("Ready for commands!")
 
     server = _ThreadedServer(("0.0.0.0", cfg.port), _Handler)

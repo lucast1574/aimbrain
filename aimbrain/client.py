@@ -5,6 +5,12 @@ Usage:
     from aimbrain.client import AimBrain
     bot = AimBrain("http://192.168.1.100:9777")
     bot.aim_shoot(duration=400)
+
+DonClaw mode:
+    bot = AimBrain("http://NUC_IP:9777")
+    text = bot.ocr()           # Read screen text (no screenshots!)
+    bot.find("Play")           # Find text on screen
+    bot.act("Play")            # Click on text
 """
 
 import json
@@ -51,14 +57,14 @@ class AimBrain:
     def get_binds(self) -> dict:
         return self._get("/binds").json()
 
-    # ── Screenshots ──────────────────────────────────────────────────
+    # ── Screenshots (local mode) ─────────────────────────────────────
 
     def screenshot(self, quality: int = 45, scale: float = 0.5) -> bytes:
-        """Full screenshot as raw JPEG bytes."""
+        """Full screenshot as raw JPEG bytes (local mode only)."""
         return self._get("/screenshot", quality=quality, scale=scale).content
 
     def screenshot_b64(self, quality: int = 45, scale: float = 0.5) -> str:
-        """Screenshot as base64 string (for LLM vision APIs)."""
+        """Screenshot as base64 string (for LLM vision APIs). Local mode only."""
         return base64.b64encode(self.screenshot(quality, scale)).decode()
 
     def screenshot_region(self, x: int, y: int, w: int, h: int, quality: int = 70) -> bytes:
@@ -69,6 +75,30 @@ class AimBrain:
         with open(path, "wb") as f:
             f.write(self.screenshot(**kwargs))
         return path
+
+    # ── DonClaw: OCR / Vision (text only, no images!) ─────────────────
+
+    def ocr(self) -> dict:
+        """Get all text on screen as JSON via DonClaw OCR. No screenshots."""
+        return self._get("/ocr").json()
+
+    def find(self, text: str) -> dict:
+        """Find specific text on screen + coordinates via DonClaw."""
+        return self._get("/find", q=text).json()
+
+    def act(self, text: str, **kwargs) -> dict:
+        """Find text on screen and click it via DonClaw (OCR + smart click)."""
+        body = {"text": text}
+        body.update(kwargs)
+        return self._post("/act", body)
+
+    def donclaw_sequence(self, steps: list[dict]) -> dict:
+        """Execute a chain of DonClaw actions."""
+        return self._post("/donclaw/sequence", {"steps": steps})
+
+    def donclaw_status(self) -> dict:
+        """Check DonClaw Node health and connectivity."""
+        return self._get("/donclaw/status").json()
 
     # ── Raw input ─────────────────────────────────────────────────────
 
@@ -127,7 +157,7 @@ class AimBrain:
 
     # ── System ────────────────────────────────────────────────────────
 
-    def focus_fortnite(self):               return self._post("/focus")
+    def focus_fortnite(self):               return self._post("/focus", {"name": "fortnite"})
     def release_all(self):                  return self._post("/release_all")
 
     # ── Pre-built plays ───────────────────────────────────────────────

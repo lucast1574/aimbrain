@@ -1,6 +1,6 @@
 # 🧠 AimBrain — AI-Powered Fortnite Agent
 
-> **Let AI play Fortnite.** A modular, remote-controlled game agent with fast screen capture, 35+ combat/building/looting macros, and an HTTP API designed for vision-model integration.
+> **Let AI play Fortnite.** A modular, remote-controlled game agent with 35+ combat/building/looting macros and an HTTP API. Now with **DonClaw Node** integration for zero-screenshot OCR-based control.
 
 ![Python](https://img.shields.io/badge/python-3.10+-blue?logo=python)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -10,19 +10,23 @@
 
 ## What is this?
 
-AimBrain is a two-part system:
+AimBrain is a two-part system with two operating modes:
 
-1. **Agent** (`aimbrain/`) — Runs on your gaming PC. Captures screenshots at high speed (JPEG, ~50ms), accepts mouse/keyboard commands, and exposes **35+ game-aware macros** over a local HTTP API.
+### Local Mode (original)
+Runs directly on your gaming PC with pyautogui + mss for screenshots and input.
 
-2. **Client SDK** (`aimbrain/client.py`) — Runs anywhere on your network. Python SDK + CLI to command the agent. Feed screenshots to GPT-4 Vision, Claude, or any model and translate decisions into macros.
+### DonClaw Mode (recommended) 🆕
+Routes all input through **DonClaw Node** running on the gaming PC. Uses **OCR text instead of screenshots** — the AI reads text, not images. 50x faster processing.
 
 ```
-┌──────────────┐    HTTP/JSON     ┌──────────────┐
-│    Client     │ ◄────────────► │    Agent      │
-│  (any device) │  screenshots   │  (gaming PC)  │
-│  AI / LLM     │  + macros      │  pyautogui    │
-└──────────────┘                 └──────────────┘
+┌──────────────────┐    HTTP/JSON     ┌──────────────────┐    HTTP/JSON     ┌──────────────┐
+│    AI / LLM      │ ◄────────────► │   AimBrain API   │ ◄────────────► │  DonClaw Node │
+│  (any device)    │  OCR text +    │   (NUC/server)   │  OCR + input   │  (gaming PC)  │
+│                  │  macros        │   port 9777      │                │  port 9800    │
+└──────────────────┘                └──────────────────┘                └──────────────┘
 ```
+
+**Key rule: In DonClaw mode, NEVER use screenshots. OCR text only.**
 
 ---
 
@@ -33,8 +37,9 @@ aimbrain/
 ├── __init__.py          # Package metadata + version
 ├── __main__.py          # python -m aimbrain entry point
 ├── config.py            # Config loading, runtime updates, singleton
-├── input.py             # Low-level mouse/keyboard (Win32 + pyautogui)
-├── screenshot.py        # Fast JPEG capture, caching, region crops
+├── donclaw.py           # 🆕 DonClaw Node adapter (OCR, input, sequences)
+├── input.py             # Dual-backend: DonClaw or local pyautogui
+├── screenshot.py        # JPEG capture (local) or OCR proxy (DonClaw)
 ├── server.py            # Threaded HTTP server, all endpoints
 ├── client.py            # Python SDK for remote control
 └── macros/
@@ -45,30 +50,20 @@ aimbrain/
     ├── looting.py       # Pickup, chests, harvesting, area sweeps
     └── utility.py       # Camera, weapons, heal, emergency, disengage
 
-agent.py                 # Thin entry: starts the server
 controller.py            # CLI tool: command the agent from terminal
-config.json              # User-editable settings + keybinds
-requirements.txt
+config.json              # User-editable settings + keybinds + DonClaw config
 ```
-
-Each module has a **single responsibility**:
-- **config** handles all settings — no globals scattered around
-- **input** is the only module that touches pyautogui/ctypes
-- **screenshot** is the only module that touches mss/PIL
-- **macros/** each file is one gameplay domain — easy to add new ones
-- **server** wires everything together into HTTP endpoints
 
 ---
 
 ## ⚡ Key Features
 
-### Performance
-- **JPEG screenshots** — 45% quality + 0.5x scale = ~15-30KB per frame
-- **50ms screenshot cache** — no redundant grabs
-- **Win32 direct input** — bypasses pyautogui for mouse via `ctypes`
-- **Threaded HTTP** — concurrent requests, no blocking
-- **Batch endpoints** — 20 actions in 1 request via `/keys` or `/macro_sequence`
-- **Zero pause** — `pyautogui.PAUSE = 0` globally
+### DonClaw Integration 🆕
+- **Zero screenshots** — OCR text only, no images sent to AI
+- **OCR in ~200ms** — local text recognition on the gaming PC
+- **Smart click** — `/act` finds text and clicks it in one call
+- **Sequences** — chain multiple actions atomically
+- **Remote control** — AimBrain runs on your NUC/server, DonClaw on gaming PC
 
 ### 35+ Game Macros
 
@@ -80,19 +75,17 @@ Each module has a **single responsibility**:
 | **Movement** | `move` (7 patterns: `zigzag` `circle` `strafe_random` `sprint_forward` `sprint_jump` `explore` `evasive`) `drop_in` |
 | **Utility** | `look` `smooth_look` `switch_weapon` `pickaxe` `reload` `heal` `emergency` `disengage` |
 
-### Pre-Built Combat Sequences
-```python
-bot.land_and_loot()                        # Dive fast → sweep loot
-bot.fight_sequence(weapon_slot=1)          # Weapon → cover → peek shoot
-bot.push_enemy(ramps=3, weapon_slot=1)     # Wall-ramp rush → swap → fire
-bot.box_fight_peek(direction="right")      # Box up → peek → reset
-```
+All macros work transparently through either backend (local or DonClaw).
 
 ---
 
 ## 🚀 Quick Start
 
-### 1. Install on your gaming PC (Windows)
+### DonClaw Mode (recommended)
+
+**Prerequisites:** DonClaw Node running on your gaming PC (port 9800).
+
+#### 1. Clone and configure
 
 ```bash
 git clone https://github.com/lucast1574/aimbrain.git
@@ -100,56 +93,88 @@ cd aimbrain
 pip install -r requirements.txt
 ```
 
-### 2. Start the agent
+Edit `config.json`:
+```json
+{
+  "donclaw": {
+    "enabled": true,
+    "host": "http://GAMING_PC_IP:9800",
+    "timeout": 10
+  }
+}
+```
+
+#### 2. Start the agent (on NUC/server)
 
 ```bash
-# Option A: entry script
-python agent.py
-
-# Option B: module
 python -m aimbrain
 ```
 
-### 3. Control from anywhere
+#### 3. Use it
 
 ```bash
-# CLI
-python controller.py --host http://YOUR_PC_IP:9777 --ping
-python controller.py --screenshot screen.jpg
-python controller.py --macros
+# Check DonClaw connection
+python controller.py --donclaw-status
+
+# Read screen text (no screenshots!)
+python controller.py --ocr
+
+# Find text on screen
+python controller.py --find "Play"
+
+# Click on text
+python controller.py --act "Play"
+
+# Run macros (routed through DonClaw)
 python controller.py --macro aim_shoot --params '{"duration": 500}'
-python controller.py --stats
-python controller.py --release
 ```
 
-### 4. Python SDK
+#### 4. Python SDK with DonClaw
 
 ```python
 from aimbrain.client import AimBrain
 
-bot = AimBrain("http://192.168.1.100:9777")
+bot = AimBrain("http://NUC_IP:9777")
 
-# Screenshots
-img = bot.screenshot()              # Raw JPEG bytes
-img_b64 = bot.screenshot_b64()      # Base64 for LLM APIs
+# Read screen (OCR text, no images!)
+text = bot.ocr()
+print(text)
 
-# Combat
-bot.switch_weapon(1)
+# Find and click text
+bot.find("Play")
+bot.act("Play")
+
+# Chain DonClaw actions
+bot.donclaw_sequence([
+    {"action": "focus", "name": "fortnite"},
+    {"action": "wait", "ms": 1000},
+    {"action": "find_click", "text": "Play", "smooth": True},
+])
+
+# Macros still work (routed through DonClaw input)
 bot.aim_shoot(duration=400)
-bot.tap_fire(count=5)
 bot.build_cover()
-
-# Movement
 bot.explore(duration=3000)
-bot.zigzag(duration=2000)
-bot.evade(duration=2000)
+```
 
-# Complex plays
-bot.push_enemy(ramps=3, weapon_slot=1)
-bot.box_fight_peek(direction="right")
+### Local Mode (original)
 
-# Safety
-bot.release_all()
+Set `"donclaw": {"enabled": false}` in config.json to use local pyautogui/mss.
+See original setup instructions below.
+
+#### 1. Install on your gaming PC (Windows)
+
+```bash
+pip install -r requirements.txt
+python -m aimbrain
+```
+
+#### 2. Control from anywhere
+
+```bash
+python controller.py --host http://GAMING_PC_IP:9777 --ping
+python controller.py --screenshot screen.jpg
+python controller.py --macro aim_shoot --params '{"duration": 500}'
 ```
 
 ---
@@ -158,40 +183,43 @@ bot.release_all()
 
 ### GET Endpoints
 
-| Endpoint | Description |
-|----------|-------------|
-| `/ping` | Health check (`{"ok": true, "version": "3.0.0", "ts": ...}`) |
-| `/screenshot` | Full screen JPEG. Query: `?quality=45&scale=0.5&monitor=0` |
-| `/screenshot/region` | Region crop. Query: `?x=0&y=0&w=400&h=200&quality=70` |
-| `/screen_size` | Monitor dimensions |
-| `/mouse` | Current cursor position |
-| `/macros` | List all macro names + count |
-| `/binds` | Current key bindings |
-| `/stats` | Performance stats (screenshots, macros, uptime, idle) |
-| `/config` | Current settings (without binds) |
-| `/monitors` | All monitors with dimensions |
+| Endpoint | DonClaw | Description |
+|----------|---------|-------------|
+| `/ping` | ✅ | Health check + backend info |
+| `/ocr` | ✅ only | Get all screen text as JSON (no screenshots!) |
+| `/find?q=text` | ✅ only | Find text on screen + coordinates |
+| `/donclaw/status` | ✅ only | DonClaw Node health check |
+| `/screenshot` | local only | Full screen JPEG (or OCR JSON in DonClaw mode) |
+| `/screenshot/region` | local only | Region crop JPEG |
+| `/macros` | ✅ | List all macro names |
+| `/binds` | ✅ | Current key bindings |
+| `/stats` | ✅ | Performance stats + backend info |
+| `/config` | ✅ | Current settings |
+| `/mouse` | ✅ | Cursor position |
+| `/screen_size` | ✅ | Monitor dimensions |
+| `/monitors` | local only | All monitors |
 
 ### POST Endpoints
 
-| Endpoint | Body | Description |
-|----------|------|-------------|
-| `/macro` | `{"name": "aim_shoot", "params": {"duration": 300}}` | Execute one macro |
-| `/macro_sequence` | `{"steps": [{"name": "...", "params": {}, "wait_ms": 0}]}` | Chain macros |
-| `/keys` | `{"actions": [{"type": "key", "key": "w", "duration": 1000}]}` | Batch raw input |
-| `/key` | `{"key": "space", "duration": 0}` | Single key press/hold |
-| `/click` | `{"x": 960, "y": 540, "button": "left"}` | Mouse click |
-| `/move` | `{"dx": 100, "dy": 0}` or `{"x": 960, "y": 540}` | Mouse move |
-| `/mousedown` / `/mouseup` | `{"button": "left"}` | Hold/release mouse |
-| `/focus` | `{}` | Focus the Fortnite window |
-| `/release_all` | `{}` | **Safety:** release all held keys + buttons |
-| `/binds` | `{"forward": "w"}` | Update keybinds at runtime |
-| `/config` | `{"screenshot_quality": 60}` | Update settings at runtime |
+| Endpoint | DonClaw | Description |
+|----------|---------|-------------|
+| `/act` | ✅ only | Find text + smart click (OCR-based) |
+| `/donclaw/sequence` | ✅ only | Chain DonClaw actions |
+| `/macro` | ✅ | Execute one macro |
+| `/macro_sequence` | ✅ | Chain macros |
+| `/keys` | ✅ | Batch raw input actions |
+| `/key` | ✅ | Single key press/hold |
+| `/click` | ✅ | Mouse click |
+| `/move` | ✅ | Mouse move |
+| `/mousedown` / `/mouseup` | ✅ | Hold/release mouse |
+| `/focus` | ✅ | Focus window (DonClaw or PowerShell) |
+| `/release_all` | ✅ | Safety: release all held keys |
+| `/binds` | ✅ | Update keybinds |
+| `/config` | ✅ | Update settings |
 
 ---
 
 ## ⚙️ Configuration
-
-Edit `config.json`:
 
 ```json
 {
@@ -201,6 +229,11 @@ Edit `config.json`:
   "screenshot_scale": 0.5,
   "screenshot_cache_ms": 50,
   "log_requests": false,
+  "donclaw": {
+    "enabled": true,
+    "host": "http://192.168.18.6:9800",
+    "timeout": 10
+  },
   "binds": {
     "forward": "w",
     "build_wall": "z",
@@ -209,61 +242,36 @@ Edit `config.json`:
 }
 ```
 
-Config and binds can also be updated at runtime via API — no restart needed.
-
 ---
 
-## 🤖 AI Integration Example
+## 🤖 AI Integration Example (DonClaw Mode)
 
 ```python
 import json
 import openai
 from aimbrain.client import AimBrain
 
-bot = AimBrain("http://192.168.1.100:9777")
+bot = AimBrain("http://NUC_IP:9777")
 client = openai.OpenAI()
 
 while True:
-    img_b64 = bot.screenshot_b64(quality=40, scale=0.4)
+    # Read screen as TEXT, not image
+    screen_text = json.dumps(bot.ocr(), indent=2)
 
     response = client.chat.completions.create(
         model="gpt-4o",
         messages=[{
             "role": "user",
-            "content": [
-                {"type": "text", "text":
-                    "You are playing Fortnite. Analyze the screen and respond with "
-                    "a JSON macro: {\"name\": \"macro_name\", \"params\": {...}}"},
-                {"type": "image_url",
-                 "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}
-            ]
+            "content":
+                f"You are playing Fortnite. Here is the screen text (OCR):\n\n"
+                f"{screen_text}\n\n"
+                f"Respond with a JSON macro: {{\"name\": \"macro_name\", \"params\": {{...}}}}"
         }],
         max_tokens=200,
     )
 
     action = json.loads(response.choices[0].message.content)
     bot.macro(action["name"], **action.get("params", {}))
-```
-
----
-
-## 🧩 Adding Custom Macros
-
-1. Pick the right file in `aimbrain/macros/` (or create a new one)
-2. Write your function using primitives from `aimbrain.input`
-3. Add it to the module's `MACROS` dict
-4. It's automatically available via the API — no other changes needed
-
-```python
-# aimbrain/macros/combat.py
-
-def my_combo():
-    """My custom combo."""
-    key_down("sprint")
-    shoot(200)
-    key_up("sprint")
-
-MACROS["my_combo"] = lambda p: my_combo()
 ```
 
 ---

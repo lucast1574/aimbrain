@@ -9,6 +9,12 @@ Usage:
     python controller.py --macros
     python controller.py --stats
     python controller.py --release
+
+DonClaw mode:
+    python controller.py --ocr
+    python controller.py --find "Play"
+    python controller.py --act "Play"
+    python controller.py --donclaw-status
 """
 
 import json
@@ -31,6 +37,13 @@ def main():
     parser.add_argument("--stats", action="store_true", help="Show agent stats")
     parser.add_argument("--focus", action="store_true", help="Focus Fortnite window")
     parser.add_argument("--release", action="store_true", help="Release all held keys")
+
+    # DonClaw commands
+    parser.add_argument("--ocr", action="store_true", help="Get screen text via DonClaw OCR")
+    parser.add_argument("--find", type=str, metavar="TEXT", help="Find text on screen via DonClaw")
+    parser.add_argument("--act", type=str, metavar="TEXT", help="Click on text via DonClaw")
+    parser.add_argument("--donclaw-status", action="store_true", help="Check DonClaw Node status")
+
     args = parser.parse_args()
 
     bot = AimBrain(host=args.host)
@@ -53,6 +66,18 @@ def main():
         print(json.dumps(bot.focus_fortnite(), indent=2))
     elif args.release:
         print(json.dumps(bot.release_all(), indent=2))
+    elif args.ocr:
+        result = bot.ocr()
+        print(json.dumps(result, indent=2))
+    elif args.find:
+        result = bot.find(args.find)
+        print(json.dumps(result, indent=2))
+    elif args.act:
+        result = bot.act(args.act)
+        print(json.dumps(result, indent=2))
+    elif args.donclaw_status:
+        result = bot.donclaw_status()
+        print(json.dumps(result, indent=2))
     else:
         parser.print_help()
 
