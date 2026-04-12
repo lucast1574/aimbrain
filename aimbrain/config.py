@@ -19,6 +19,7 @@ DEFAULT_CONFIG = {
         "enabled": False,
         "host": "http://192.168.18.6:9800",
         "timeout": 10,
+        "ssh_user": "Lucas",
     },
 }
 
@@ -98,6 +99,10 @@ class Config:
     @property
     def donclaw_timeout(self) -> int:
         return self._settings["donclaw"]["timeout"]
+
+    @property
+    def donclaw_ssh_user(self) -> str:
+        return self._settings["donclaw"].get("ssh_user", "Lucas")
 
     def get(self, key: str, default=None):
         return self._settings.get(key, default)
