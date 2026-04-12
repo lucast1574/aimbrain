@@ -1,8 +1,8 @@
 """
 Screenshot engine — fast JPEG capture with caching and region support.
 
-When DonClaw is enabled, provides OCR text instead of screenshots.
-KEY RULE: No images sent to AI — use OCR text only in DonClaw mode.
+When DonClaw is enabled, provides both OCR text AND ultra-compressed
+screenshots for game vision AI.
 """
 
 import io
@@ -102,6 +102,22 @@ def ocr() -> dict:
 def find_text(text: str) -> dict:
     """Find specific text on screen via DonClaw."""
     return _dc().find(text)
+
+
+def capture_donclaw(width: int = 480, quality: int = 15) -> bytes | None:
+    """
+    Capture an ultra-compressed screenshot via DonClaw for game vision.
+    Returns JPEG bytes (typically 8-20KB at 480p q15).
+    """
+    return _dc().screenshot_optimized(width=width, quality=quality)
+
+
+def capture_donclaw_raw() -> bytes | None:
+    """
+    Capture a full-resolution screenshot via DonClaw.
+    Returns raw JPEG bytes (~250-400KB).
+    """
+    return _dc().screenshot_capture()
 
 
 # ─── Public API ───────────────────────────────────────────────────────

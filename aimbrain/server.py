@@ -130,12 +130,39 @@ class _Handler(BaseHTTPRequestHandler):
                 "backend": "donclaw" if cfg.donclaw_enabled else "local",
             })
 
+        elif p == "/screenshot/vision":
+            if not _donclaw_enabled():
+                self._error(503, "DonClaw not enabled")
+                return
+            width = int(params.get("w", [480])[0])
+            quality = int(params.get("q", [15])[0])
+            data = screenshot.capture_donclaw(width=width, quality=quality)
+            if data:
+                _stat_inc("screenshots")
+                self._ok(data, "image/jpeg")
+            else:
+                self._error(502, "Screenshot capture failed")
+
+        elif p == "/screenshot/raw":
+            if not _donclaw_enabled():
+                self._error(503, "DonClaw not enabled")
+                return
+            data = screenshot.capture_donclaw_raw()
+            if data:
+                _stat_inc("screenshots")
+                self._ok(data, "image/jpeg")
+            else:
+                self._error(502, "Screenshot capture failed")
+
         elif p == "/screenshot":
             if _donclaw_enabled():
-                # DonClaw mode: return OCR text instead
-                data = screenshot.ocr()
-                _stat_inc("ocr_calls")
-                self._json(data)
+                # DonClaw mode: return compressed screenshot for vision
+                data = screenshot.capture_donclaw()
+                if data:
+                    _stat_inc("screenshots")
+                    self._ok(data, "image/jpeg")
+                else:
+                    self._error(502, "Screenshot capture failed")
             else:
                 monitor = int(params.get("monitor", [cfg.monitor])[0])
                 quality = int(params.get("quality", [cfg.screenshot_quality])[0])
@@ -437,11 +464,17 @@ def main():
     cfg = _config.init(config_path)
 
     backend = "DonClaw" if cfg.donclaw_enabled else "Local"
+    
+    if cfg.donclaw_enabled:
+        from aimbrain import donclaw
+        donclaw.ensure_capture_script()
+    
     log.info("=" * 56)
     log.info(f"  AimBrain v{__version__} — Fortnite Vision Agent")
     log.info(f"  Backend: {backend}")
     if cfg.donclaw_enabled:
         log.info(f"  DonClaw Node: {cfg.donclaw_host}")
+        log.info(f"  Vision: screenshot capture enabled")
     log.info(f"  Port: {cfg.port}")
     if not cfg.donclaw_enabled:
         log.info(f"  Screenshot: JPEG q={cfg.screenshot_quality} scale={cfg.screenshot_scale}")

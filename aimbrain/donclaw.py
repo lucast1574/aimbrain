@@ -5,10 +5,16 @@ DonClaw Node runs on the gaming PC and provides keyboard, mouse, OCR,
 and window management over HTTP. This module wraps that API so the rest
 of AimBrain can use it transparently.
 
-KEY RULE: Never request screenshots. Use /ocr (text JSON) only.
+Supports both OCR (text) and ultra-compressed screenshots for game vision.
 """
 
+import io
+import os
 import logging
+import subprocess
+import tempfile
+import time
+
 import requests
 
 from aimbrain import config as _config
@@ -232,6 +238,139 @@ def notify(title: str, body: str) -> dict:
     r = _get_session().post(_url("/notify"), json={"title": title, "body": body}, timeout=_timeout())
     r.raise_for_status()
     return r.json()
+
+
+# ─── Screenshot (via PowerShell remote capture) ──────────────────────
+
+# Path on the gaming PC where the capture script + frames live
+_REMOTE_SCREENCAP_DIR = r"C:\screencap"
+_REMOTE_FRAME_PATH = r"C:\screencap\frame.jpg"
+_CAPTURE_SCRIPT = r"C:\screencap\cap.ps1"
+
+# Local temp path
+_LOCAL_FRAME = "/tmp/aimbrain_frame.jpg"
+
+
+def _get_ssh_host() -> str:
+    """Get the gaming PC SSH host from DonClaw host URL."""
+    host = _config.get().donclaw_host
+    # Extract IP from http://192.168.18.6:9800
+    from urllib.parse import urlparse
+    parsed = urlparse(host)
+    return parsed.hostname or "192.168.18.6"
+
+
+def screenshot_capture() -> bytes | None:
+    """
+    Capture a screenshot from the gaming PC.
+    
+    Flow:
+    1. DonClaw /launch runs PowerShell capture script (user session = GPU access)
+    2. SCP downloads the JPEG to NUC
+    3. Returns raw JPEG bytes
+    
+    The capture script saves a full-res JPEG (~250-400KB).
+    Caller can compress/resize with Pillow.
+    """
+    ssh_host = _get_ssh_host()
+    
+    try:
+        # Trigger capture via DonClaw (runs in user session with screen access)
+        r = _get_session().post(
+            _url("/launch"),
+            json={
+                "path": "powershell.exe",
+                "args": f"-ExecutionPolicy Bypass -WindowStyle Hidden -File {_CAPTURE_SCRIPT}"
+            },
+            timeout=5,
+        )
+        r.raise_for_status()
+        
+        # Wait for capture to complete (PowerShell startup + capture takes ~2s)
+        time.sleep(2.5)
+        
+        # Download via SCP (use Unix-style path for scp)
+        remote_path = f"Lucas@{ssh_host}:C:/screencap/frame.jpg"
+        result = subprocess.run(
+            ["scp", "-q", remote_path, _LOCAL_FRAME],
+            capture_output=True, timeout=5,
+        )
+        
+        if result.returncode != 0:
+            log.warning(f"SCP failed: {result.stderr.decode()}")
+            return None
+        
+        with open(_LOCAL_FRAME, "rb") as f:
+            return f.read()
+    except Exception as e:
+        log.warning(f"Screenshot capture failed: {e}")
+        return None
+
+
+def screenshot_optimized(width: int = 480, quality: int = 15) -> bytes | None:
+    """
+    Capture and compress a screenshot for AI vision.
+    Returns ultra-compressed JPEG (~8-20KB).
+    """
+    raw = screenshot_capture()
+    if not raw:
+        return None
+    
+    try:
+        from PIL import Image
+        img = Image.open(io.BytesIO(raw))
+        
+        # Resize
+        ratio = img.height / img.width
+        new_h = int(width * ratio)
+        img = img.resize((width, new_h), Image.NEAREST)
+        
+        # Compress
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=quality, optimize=True)
+        return buf.getvalue()
+    except Exception as e:
+        log.warning(f"Screenshot optimization failed: {e}")
+        return raw  # Return raw if compression fails
+
+
+def ensure_capture_script():
+    """
+    Ensure the PowerShell capture script exists on the gaming PC.
+    Called once at startup.
+    """
+    ssh_host = _get_ssh_host()
+    script = """Add-Type -AssemblyName System.Drawing
+Add-Type -AssemblyName System.Windows.Forms
+$bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+$bmp = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height)
+$g = [System.Drawing.Graphics]::FromImage($bmp)
+$g.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+$g.Dispose()
+$bmp.Save('C:\\screencap\\frame.jpg', [System.Drawing.Imaging.ImageFormat]::Jpeg)
+$bmp.Dispose()
+"""
+    
+    try:
+        # Ensure directory exists
+        subprocess.run(
+            ["ssh", f"Lucas@{ssh_host}", f"mkdir {_REMOTE_SCREENCAP_DIR} 2>nul"],
+            capture_output=True, timeout=5,
+        )
+        
+        # Write script
+        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".ps1", delete=False)
+        tmp.write(script)
+        tmp.close()
+        
+        subprocess.run(
+            ["scp", "-q", tmp.name, f"Lucas@{ssh_host}:{_CAPTURE_SCRIPT}"],
+            capture_output=True, timeout=5,
+        )
+        os.unlink(tmp.name)
+        log.info(f"Capture script deployed to {ssh_host}:{_CAPTURE_SCRIPT}")
+    except Exception as e:
+        log.warning(f"Failed to deploy capture script: {e}")
 
 
 # ─── Safety ───────────────────────────────────────────────────────────

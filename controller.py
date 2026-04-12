@@ -43,6 +43,8 @@ def main():
     parser.add_argument("--find", type=str, metavar="TEXT", help="Find text on screen via DonClaw")
     parser.add_argument("--act", type=str, metavar="TEXT", help="Click on text via DonClaw")
     parser.add_argument("--donclaw-status", action="store_true", help="Check DonClaw Node status")
+    parser.add_argument("--vision", type=str, metavar="FILE", help="Save vision screenshot (compressed)")
+    parser.add_argument("--vision-raw", type=str, metavar="FILE", help="Save full-res DonClaw screenshot")
 
     args = parser.parse_args()
 
@@ -78,6 +80,16 @@ def main():
     elif args.donclaw_status:
         result = bot.donclaw_status()
         print(json.dumps(result, indent=2))
+    elif args.vision:
+        data = bot.vision_screenshot()
+        with open(args.vision, 'wb') as f:
+            f.write(data)
+        print(f"Saved vision frame: {args.vision} ({len(data)} bytes)")
+    elif args.vision_raw:
+        data = bot.vision_screenshot_raw()
+        with open(args.vision_raw, 'wb') as f:
+            f.write(data)
+        print(f"Saved raw frame: {args.vision_raw} ({len(data)} bytes)")
     else:
         parser.print_help()
 

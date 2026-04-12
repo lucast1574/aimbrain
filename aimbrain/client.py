@@ -76,7 +76,7 @@ class AimBrain:
             f.write(self.screenshot(**kwargs))
         return path
 
-    # ── DonClaw: OCR / Vision (text only, no images!) ─────────────────
+    # ── DonClaw: OCR + Vision ─────────────────────────────────
 
     def ocr(self) -> dict:
         """Get all text on screen as JSON via DonClaw OCR. No screenshots."""
@@ -99,6 +99,18 @@ class AimBrain:
     def donclaw_status(self) -> dict:
         """Check DonClaw Node health and connectivity."""
         return self._get("/donclaw/status").json()
+
+    def vision_screenshot(self, width: int = 480, quality: int = 15) -> bytes:
+        """Ultra-compressed screenshot for AI vision (~8-20KB)."""
+        return self._get("/screenshot/vision", w=width, q=quality).content
+
+    def vision_screenshot_b64(self, width: int = 480, quality: int = 15) -> str:
+        """Vision screenshot as base64 for LLM APIs."""
+        return base64.b64encode(self.vision_screenshot(width, quality)).decode()
+
+    def vision_screenshot_raw(self) -> bytes:
+        """Full-res screenshot from DonClaw."""
+        return self._get("/screenshot/raw").content
 
     # ── Raw input ─────────────────────────────────────────────────────
 
